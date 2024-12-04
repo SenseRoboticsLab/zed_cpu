@@ -56,3 +56,13 @@ target_link_libraries(zed_node
   ${catkin_LIBRARIES}
   ${PROJECT_SOURCE_DIR}/include/zed_cpu
 )
+
+add_executable(zed_example
+        src/zed_example.cpp
+)
+
+target_link_libraries(zed_example
+        zed_lib
+        ${catkin_LIBRARIES}
+        ${PROJECT_SOURCE_DIR}/include/zed_cpu
+)

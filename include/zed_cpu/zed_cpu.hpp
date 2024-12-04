@@ -16,6 +16,8 @@ public:
   ZedCameraNode(
     const std::shared_ptr<ros::NodeHandle> & nh,
     const std::shared_ptr<image_transport::ImageTransport> & it);
+  void runCamera();
+  void runIMU();
   void run();
 
 private:

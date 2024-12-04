@@ -23,9 +23,9 @@ ZedCameraNode::ZedCameraNode(
 {
   // ROS initialization
   node_name_ = ros::this_node::getName();
-  left_image_pub_ = it_->advertise("rgb/left_image", 1);
-  right_image_pub_ = it_->advertise("rgb/right_image", 1);
-  imu_pub_ = nh_->advertise<sensor_msgs::Imu>("imu_data", 1);
+  left_image_pub_ = it_->advertise("rgb/left_image/compressed", 1);
+  right_image_pub_ = it_->advertise("rgb/right_image/compressed", 1);
+  imu_pub_ = nh_->advertise<sensor_msgs::Imu>("imu_data", 10);
 
   CameraInit();
   SensorInit();
@@ -33,19 +33,33 @@ ZedCameraNode::ZedCameraNode(
   ROS_INFO("[%s] Node started", node_name_.c_str());
 }
 
+void ZedCameraNode::runCamera()
+{
+  PublishImages();
+  // ros::spinOnce();
+}
+
+void ZedCameraNode::runIMU()
+{
+  while(1){
+    PublishIMU();
+  }
+
+}
+
 void ZedCameraNode::run()
 {
   PublishImages();
-  PublishIMU();
+  // PublishIMU();
 }
 
 void ZedCameraNode::CameraInit()
 {
   // Initialize ZED camera
   sl_oc::video::VideoParams params;
-  params.res = sl_oc::video::RESOLUTION::HD720;
-  params.fps = sl_oc::video::FPS::FPS_60;
-  params.verbose = sl_oc::VERBOSITY::ERROR;
+  params.res = sl_oc::video::RESOLUTION::VGA;
+  params.fps = sl_oc::video::FPS::FPS_30;
+  params.verbose = sl_oc::VERBOSITY::INFO;
 
   // Create Video Capture
   cap_ = std::make_unique<sl_oc::video::VideoCapture>(params);
@@ -99,10 +113,15 @@ void ZedCameraNode::PublishImages()
     cv::Mat right_img = frame_bgr(cv::Rect(frame_bgr.cols / 2, 0, frame_bgr.cols / 2, frame_bgr.rows));
 
     // Convert the OpenCV images to ROS image messages
+    std_msgs::Header head;
+    head.stamp = ros::Time::now();
     sensor_msgs::ImagePtr left_msg =
       cv_bridge::CvImage(std_msgs::Header(), "bgr8", left_img).toImageMsg();
     sensor_msgs::ImagePtr right_msg =
       cv_bridge::CvImage(std_msgs::Header(), "bgr8", right_img).toImageMsg();
+
+    left_msg->header = head;
+    right_msg->header = head;
 
     // Publish the left and right image messages
     left_image_pub_.publish(left_msg);
@@ -113,7 +132,7 @@ void ZedCameraNode::PublishImages()
 void ZedCameraNode::PublishIMU()
 {
   // Get IMU data with a timeout of 5 milliseconds
-  const sl_oc::sensors::data::Imu imu_data = sens_->getLastIMUData(5000);
+  const sl_oc::sensors::data::Imu imu_data = sens_->getLastIMUData(2000);
 
   if (imu_data.valid == sl_oc::sensors::data::Imu::NEW_VAL) {
     // Create a sensor_msgs/Imu message
@@ -132,6 +151,10 @@ void ZedCameraNode::PublishIMU()
 
     // Publish the sensor_msgs/Imu message
     imu_pub_.publish(imu_msg);
+    ROS_INFO_STREAM("publish IMU");
+  }
+  else{
+    ROS_INFO_STREAM("IMU data not valid");
   }
 }
 
