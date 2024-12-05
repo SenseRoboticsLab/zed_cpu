@@ -23,8 +23,10 @@ ZedCameraNode::ZedCameraNode(
 {
   // ROS initialization
   node_name_ = ros::this_node::getName();
-  left_image_pub_ = it_->advertise("rgb/left_image/compressed", 1);
-  right_image_pub_ = it_->advertise("rgb/right_image/compressed", 1);
+  left_image_pub_ = it_->advertise("rgb/left_image_raw", 1);
+  right_image_pub_ = it_->advertise("rgb/right_image_raw", 1);
+  left_image_compressed_pub_ = nh_->advertise<sensor_msgs::CompressedImage>("rgb/left_image_compressed", 1);
+  right_image_compressed_pub_ = nh_->advertise<sensor_msgs::CompressedImage>("rgb/right_image_compressed", 1);
   imu_pub_ = nh_->advertise<sensor_msgs::Imu>("imu_data", 10);
 
   CameraInit();
@@ -124,8 +126,31 @@ void ZedCameraNode::PublishImages()
     right_msg->header = head;
 
     // Publish the left and right image messages
-    left_image_pub_.publish(left_msg);
-    right_image_pub_.publish(right_msg);
+    // left_image_pub_.publish(left_msg);
+    // right_image_pub_.publish(right_msg);
+
+
+
+    // Create a CompressedImage message
+    sensor_msgs::CompressedImage left_compressed_msg, right_compressed_msg;
+    left_compressed_msg.header = left_msg->header; // Use the same header as the raw image
+    left_compressed_msg.format = "jpeg";
+    right_compressed_msg.header = right_msg->header; // Use the same header as the raw image
+    right_compressed_msg.format = "jpeg";
+
+    // Compress the image
+    std::vector<uint8_t> left_buffer, right_buffer;
+    std::vector<int> compression_params = {cv::IMWRITE_JPEG_QUALITY, 90}; // Adjust quality (0-100)
+    cv::imencode(".jpg", left_img, left_buffer, compression_params);
+    cv::imencode(".jpg", right_img, right_buffer, compression_params);
+
+    // Fill the CompressedImage message
+    left_compressed_msg.data = left_buffer;
+    right_compressed_msg.data = right_buffer;
+
+    // Publish the compressed image
+    left_image_compressed_pub_.publish(left_compressed_msg);
+    right_image_compressed_pub_.publish(right_compressed_msg);
   }
 }
 

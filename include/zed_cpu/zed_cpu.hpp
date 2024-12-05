@@ -32,6 +32,8 @@ private:
   ros::Publisher imu_pub_;
   image_transport::Publisher left_image_pub_;
   image_transport::Publisher right_image_pub_;
+  ros::Publisher left_image_compressed_pub_;
+  ros::Publisher right_image_compressed_pub_;
   std::unique_ptr<sl_oc::video::VideoCapture> cap_;
   std::unique_ptr<sl_oc::sensors::SensorCapture> sens_;
 };
