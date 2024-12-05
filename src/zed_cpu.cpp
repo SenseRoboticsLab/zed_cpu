@@ -151,10 +151,10 @@ void ZedCameraNode::PublishIMU()
 
     // Publish the sensor_msgs/Imu message
     imu_pub_.publish(imu_msg);
-    ROS_INFO_STREAM("publish IMU");
+    // ROS_INFO_STREAM("publish IMU");
   }
   else{
-    ROS_INFO_STREAM("IMU data not valid");
+    ROS_WARN_STREAM("IMU data not valid");
   }
 }
 
