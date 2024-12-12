@@ -25,8 +25,8 @@ ZedCameraNode::ZedCameraNode(
   node_name_ = ros::this_node::getName();
   left_image_pub_ = it_->advertise("rgb/left_image_raw", 1);
   right_image_pub_ = it_->advertise("rgb/right_image_raw", 1);
-  left_image_compressed_pub_ = nh_->advertise<sensor_msgs::CompressedImage>("rgb/left_image_compressed", 1);
-  right_image_compressed_pub_ = nh_->advertise<sensor_msgs::CompressedImage>("rgb/right_image_compressed", 1);
+  left_image_compressed_pub_ = nh_->advertise<sensor_msgs::CompressedImage>("rgb/left_image/compressed", 1);
+  right_image_compressed_pub_ = nh_->advertise<sensor_msgs::CompressedImage>("rgb/right_image/compressed", 1);
   imu_pub_ = nh_->advertise<sensor_msgs::Imu>("imu_data", 10);
 
   CameraInit();
@@ -179,7 +179,7 @@ void ZedCameraNode::PublishIMU()
     // ROS_INFO_STREAM("publish IMU");
   }
   else{
-    ROS_WARN_STREAM("IMU data not valid");
+    ROS_DEBUG_STREAM("IMU data not valid");
   }
 }
 
