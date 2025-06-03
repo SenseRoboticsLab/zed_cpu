@@ -60,7 +60,7 @@ void ZedCameraNode::CameraInit()
   // Initialize ZED camera
   sl_oc::video::VideoParams params;
   // params.res = sl_oc::video::RESOLUTION::HD1080;
-  params.res = sl_oc::video::RESOLUTION::HD720
+  params.res = sl_oc::video::RESOLUTION::HD720;
   params.fps = sl_oc::video::FPS::FPS_30;
   params.verbose = sl_oc::VERBOSITY::INFO;
 
