@@ -43,10 +43,11 @@ void ZedCameraNode::runCamera()
 
 void ZedCameraNode::runIMU()
 {
+  ros::Rate rate(200);
   while(1){
     PublishIMU();
+    rate.sleep();
   }
-
 }
 
 void ZedCameraNode::run()
@@ -59,9 +60,16 @@ void ZedCameraNode::CameraInit()
 {
   // Initialize ZED camera
   sl_oc::video::VideoParams params;
-  params.res = sl_oc::video::RESOLUTION::VGA;
-  params.fps = sl_oc::video::FPS::FPS_30;
+  params.res = sl_oc::video::RESOLUTION::HD720;
+  params.fps = sl_oc::video::FPS::FPS_15;
   params.verbose = sl_oc::VERBOSITY::INFO;
+
+  // //camera parameter
+  // double fx = 355.3514, fy = 355.9311, cx = 337.8985, cy = 194.2103;
+  // double k1 = 0.3466, k2=0.1725, p1 = 0.0150, p2 = 0.0063;
+  // camera_matrix_ = (cv::Mat_<double>(3,3)<<fx, 0, cx, 0, fy, cy, 0, 0, 1);
+  // dist_coeffs_ = (cv::Mat_<double>(1,4)<<k1, k2, p1, p2);
+  //
 
   // Create Video Capture
   cap_ = std::make_unique<sl_oc::video::VideoCapture>(params);
@@ -114,6 +122,11 @@ void ZedCameraNode::PublishImages()
     cv::Mat left_img = frame_bgr(cv::Rect(0, 0, frame_bgr.cols / 2, frame_bgr.rows));
     cv::Mat right_img = frame_bgr(cv::Rect(frame_bgr.cols / 2, 0, frame_bgr.cols / 2, frame_bgr.rows));
 
+    // //undistort image
+    // cv::Mat left_undist_img,right_undist_img;
+    // cv::undistort(left_img, left_undist_img, camera_matrix_, dist_coeffs_);
+    // cv::undistort(right_img, right_undist_img, camera_matrix_, dist_coeffs_);
+
     // Convert the OpenCV images to ROS image messages
     std_msgs::Header head;
     head.stamp = ros::Time::now();
@@ -157,7 +170,7 @@ void ZedCameraNode::PublishImages()
 void ZedCameraNode::PublishIMU()
 {
   // Get IMU data with a timeout of 5 milliseconds
-  const sl_oc::sensors::data::Imu imu_data = sens_->getLastIMUData(2000);
+  const sl_oc::sensors::data::Imu imu_data = sens_->getLastIMUData(1);
 
   if (imu_data.valid == sl_oc::sensors::data::Imu::NEW_VAL) {
     // Create a sensor_msgs/Imu message

@@ -1,5 +1,6 @@
 <launch>
 
     <node pkg="zed_cpu" type="zed_node" name="zed_node" output="screen"/>
+    <node pkg="zed_cpu" type="zed2i_rectification_node_new.py" name="image_rect_node" output="log"/>
 
 </launch>

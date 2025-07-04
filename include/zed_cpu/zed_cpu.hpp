@@ -2,6 +2,7 @@
 #include <vector>
 
 #include <image_transport/image_transport.h>
+#include <opencv2/opencv.hpp>
 #include <ros/ros.h>
 
 #include <zed_lib/sensorcapture.hpp>
@@ -36,6 +37,7 @@ private:
   ros::Publisher right_image_compressed_pub_;
   std::unique_ptr<sl_oc::video::VideoCapture> cap_;
   std::unique_ptr<sl_oc::sensors::SensorCapture> sens_;
+  cv::Mat camera_matrix_, dist_coeffs_;
 };
 
 }  // namespace zed_cpu

@@ -1,0 +1,10 @@
+camera_matrix:
+  fx: 355.3514
+  fy: 355.9311
+  cx: 337.8985
+  cy: 194.2103
+distortion_coefficients:
+  k1: 0.3466
+  k2: 0.1725
+  p1: 0.0150
+  p2: 0.0063

@@ -1,0 +1,5 @@
+<launch>
+    <!-- Node to undistort images -->
+    <node name="image_undistorter" pkg="zed_cpu" type="dist" output="screen"/>
+    <rosparam file="$(find zed_cpu)/config/param.yaml" command="load" />
+</launch>
