@@ -181,11 +181,11 @@ void ZedCameraNode::PublishIMU()
     // Convert the IMU data to the sensor_msgs/Imu message fields
     imu_msg.linear_acceleration.x = -imu_data.aX;
     imu_msg.linear_acceleration.y = imu_data.aY;
-    imu_msg.linear_acceleration.z = imu_data.aZ;
+    imu_msg.linear_acceleration.z = -imu_data.aZ;
 
     imu_msg.angular_velocity.x = -imu_data.gX;
     imu_msg.angular_velocity.y = imu_data.gY;
-    imu_msg.angular_velocity.z = imu_data.gZ;
+    imu_msg.angular_velocity.z = -imu_data.gZ;
 
     // Publish the sensor_msgs/Imu message
     imu_pub_.publish(imu_msg);
