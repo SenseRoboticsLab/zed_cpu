@@ -66,12 +66,3 @@ target_link_libraries(zed_example
         ${catkin_LIBRARIES}
         ${PROJECT_SOURCE_DIR}/include/zed_cpu
 )
-
-add_executable(dist
-        src/dist_node.cpp
-)
-
-target_link_libraries(dist
-        ${OpenCV_LIBS}
-        ${catkin_LIBRARIES}
-)
