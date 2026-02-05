@@ -1,57 +1,55 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-import rospy
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
 import cv2
 import numpy as np
 from sensor_msgs.msg import CompressedImage
 from cv_bridge import CvBridge
 
-class StereoRectifier:
+class StereoRectifier(Node):
     def __init__(self):
-        rospy.init_node("stereo_rectify_node", anonymous=True)
+        super().__init__('stereo_rectify_node')
 
         # Load camera parameters
         self.load_camera_params()
 
         # Create CvBridge
         self.bridge = CvBridge()
+        
+        # QoS setup for compressed images (often Best Effort)
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
 
         # Subscribe to compressed image topics
-        rospy.Subscriber("/zed_node/rgb/left_image/compressed", CompressedImage, self.left_image_callback, queue_size=1)
-        rospy.Subscriber("/zed_node/rgb/right_image/compressed", CompressedImage, self.right_image_callback, queue_size=1)
+        self.create_subscription(
+            CompressedImage,
+            "/zed_node/rgb/left_image/compressed", 
+            self.left_image_callback, 
+            qos_profile)
+            
+        self.create_subscription(
+            CompressedImage, 
+            "/zed_node/rgb/right_image/compressed", 
+            self.right_image_callback, 
+            qos_profile)
 
         # Publish rectified compressed images
-        self.left_pub = rospy.Publisher("/zed_node/rgb/left_image_rect/compressed", CompressedImage, queue_size=1)
-        self.right_pub = rospy.Publisher("/zed_node/rgb/right_image_rect/compressed", CompressedImage, queue_size=1)
+        self.left_pub = self.create_publisher(CompressedImage, "/zed_node/rgb/left_image_rect/compressed", 1)
+        self.right_pub = self.create_publisher(CompressedImage, "/zed_node/rgb/right_image_rect/compressed", 1)
 
-        rospy.loginfo("Stereo Rectifier Node Started")
+        self.get_logger().info("Stereo Rectifier Node Started")
 
     def load_camera_params(self):
         """ Load camera intrinsics and compute rectification maps """
-
-        # Set numpy print options
+        
+        # Hardcoded parameters from original script
         np.set_printoptions(suppress=True, precision=6)
-
-        # === Replaced Camera Intrinsics ===
-        # self.K_left = np.array([[720.6829, 0, 626.9098],
-        #                         [0, 722.6085, 385.3141],
-        #                         [0, 0, 1]], dtype=np.float64)
-        #
-        # self.D_left = np.array([0.1810, 0.5509, 0.0103, -0.0219, 0.1745], dtype=np.float64)
-        #
-        # self.K_right = np.array([[725.7787, 0, 641.5171],
-        #                          [0, 729.5106, 360.3579],
-        #                          [0, 0, 1]], dtype=np.float64)
-        #
-        # self.D_right = np.array([0.1465, 0.8906, -0.0015, -0.0053, -0.2765], dtype=np.float64)
-        #
-        # # === Replaced Stereo Extrinsics ===
-        # R_stereo = np.array([[0.9997,  0.0044, -0.0245],
-        #                      [-0.0039, 0.9997,  0.0222],
-        #                      [0.0246, -0.0221,  0.9995]], dtype=np.float64)
-        #
-        # # MATLAB unit is mm → convert to meters
-        # T_stereo = np.array([[0.1171463], [-0.0003619], [0.0058835]], dtype=np.float64)
 
         self.K_left = np.array([[725.7795, 0, 641.5163],
                                 [0, 729.5113, 360.3576],
@@ -94,11 +92,11 @@ class StereoRectifier:
         )
 
         # Print for verification
-        rospy.loginfo("Left Rectification Matrix:\n%s", R_left)
-        rospy.loginfo("Right Rectification Matrix:\n%s", R_right)
-        rospy.loginfo("Left Projection Matrix:\n%s", P_left)
-        rospy.loginfo("Right Projection Matrix:\n%s", P_right)
-        rospy.loginfo("Camera parameters loaded and rectification maps computed.")
+        self.get_logger().info(f"Left Rectification Matrix:\n{R_left}")
+        self.get_logger().info(f"Right Rectification Matrix:\n{R_right}")
+        self.get_logger().info(f"Left Projection Matrix:\n{P_left}")
+        self.get_logger().info(f"Right Projection Matrix:\n{P_right}")
+        self.get_logger().info("Camera parameters loaded and rectification maps computed.")
 
     def rectify_image(self, img, map_x, map_y):
         """ Rectify image using precomputed rectification maps """
@@ -107,15 +105,23 @@ class StereoRectifier:
     def encode_compressed_image(self, img):
         """ Convert rectified image to CompressedImage format """
         msg = CompressedImage()
-        msg.header.stamp = rospy.Time.now()
+        msg.header.stamp = self.get_clock().now().to_msg()
         msg.format = "jpeg"
         msg.data = np.array(cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])[1]).tobytes()
         return msg
 
     def left_image_callback(self, msg):
         """ Callback for left compressed image """
-        np_arr = np.frombuffer(msg.data, np.uint8)
+        # ROS 2 python message data is usually a 'bytes' object or 'array.array'
+        if hasattr(msg.data, 'tobytes'):
+            data = msg.data.tobytes()
+        else:
+            data = msg.data
+            
+        np_arr = np.frombuffer(data, np.uint8)
         img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if img is None:
+            return
 
         img_rect = self.rectify_image(img, self.map_left_x, self.map_left_y)
 
@@ -125,8 +131,15 @@ class StereoRectifier:
 
     def right_image_callback(self, msg):
         """ Callback for right compressed image """
-        np_arr = np.frombuffer(msg.data, np.uint8)
+        if hasattr(msg.data, 'tobytes'):
+            data = msg.data.tobytes()
+        else:
+            data = msg.data
+
+        np_arr = np.frombuffer(data, np.uint8)
         img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if img is None:
+            return
 
         img_rect = self.rectify_image(img, self.map_right_x, self.map_right_y)
 
@@ -134,9 +147,16 @@ class StereoRectifier:
         img_msg.header = msg.header
         self.right_pub.publish(img_msg)
 
-if __name__ == "__main__":
+def main(args=None):
+    rclpy.init(args=args)
+    node = StereoRectifier()
     try:
-        node = StereoRectifier()
-        rospy.spin()
-    except rospy.ROSInterruptException:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
         pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()

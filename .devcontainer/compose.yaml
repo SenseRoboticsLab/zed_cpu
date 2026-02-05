@@ -1,0 +1,31 @@
+services:
+
+  bluerov_ros2_driver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: foxy-desktop:plan_sim
+    container_name: bluerov_ros2_driver_node_dev
+    # networks:
+    #   - ros_network
+    # network_mode: host
+    environment:
+      - ROS_DOMAIN_ID=42        # Ensure both containers have the same domain ID
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - DISPLAY=$DISPLAY
+      - XAUTHORITY=$XAUTHORITY
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /home/da/extra/data:/home/da/extra/data
+      - /home/da/project/ros2/bluerov_ws/src/zed_cpu_ros2:/home/user/ros2_ws/src/zed_cpu_ros2
+      - /dev/shm:/dev/shm
+      - /dev:/dev
+    tty: true
+    stdin_open: true
+    privileged: true
+    command: bash -i
+
+# networks:
+#   ros_network:
+#     external: true

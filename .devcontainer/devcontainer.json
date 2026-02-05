@@ -1,0 +1,14 @@
+{
+  "name": "ROS 2 Workspace humble-ros-base",
+  "remoteUser": "user",
+  "dockerComposeFile": "compose.yaml",
+  "service": "bluerov_ros2_driver",
+
+  "customizations" : {
+    "jetbrains" : {
+      "backend" : "CLion"
+    }
+  },
+  "workspaceFolder": "/home/user/ros2_ws/src/zed_cpu_ros2",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/home/user/ros2_ws/src/zed_cpu_ros2,type=bind",
+}

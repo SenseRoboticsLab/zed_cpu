@@ -1,59 +1,72 @@
-#include <zed_cpu.hpp>
+#include "zed_cpu_ros2/zed_cpu.hpp"
 
-#include <memory>
-#include <vector>
-
+#include <chrono>
 #include <cv_bridge/cv_bridge.h>
-#include <image_transport/image_transport.h>
-#include <opencv2/opencv.hpp>
-#include <ros/ros.h>
 
-#include <sensor_msgs/Imu.h>
+using namespace std::chrono_literals;
 
-#include <zed_lib/sensorcapture.hpp>
-#include <zed_lib/videocapture.hpp>
-
-namespace zed_cpu
+namespace zed_cpu_ros2
 {
 
-ZedCameraNode::ZedCameraNode(
-  const std::shared_ptr<ros::NodeHandle> & nh,
-  const std::shared_ptr<image_transport::ImageTransport> & it)
-: nh_(nh), it_(it)
+ZedCameraNode::ZedCameraNode(const rclcpp::NodeOptions & options)
+: Node("zed_camera_node", options), running_(false)
 {
   // ROS initialization
-  node_name_ = ros::this_node::getName();
-  left_image_pub_ = it_->advertise("rgb/left_image_raw", 1);
-  right_image_pub_ = it_->advertise("rgb/right_image_raw", 1);
-  left_image_compressed_pub_ = nh_->advertise<sensor_msgs::CompressedImage>("rgb/left_image/compressed", 1);
-  right_image_compressed_pub_ = nh_->advertise<sensor_msgs::CompressedImage>("rgb/right_image/compressed", 1);
-  imu_pub_ = nh_->advertise<sensor_msgs::Imu>("imu_data", 10);
+  // it_ = std::make_shared<image_transport::ImageTransport>(shared_from_this()); 
+  // NOTE: shared_from_this() cannot be called in constructor. 
+  // We will initialize image_transport and publishers in a slightly different way or use `image_transport::create_publisher`.
+  
+  // Actually, we can't use shared_from_this() in constructor.
+  // We can treat `it_` initialization lates or use the static helper if available.
+  // But common pattern is to just use correct helper functions.
+
+  imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("~/imu_data", 10);
+  
+  left_image_compressed_pub_ = this->create_publisher<sensor_msgs::msg::CompressedImage>("~/rgb/left_image/compressed", 1);
+  right_image_compressed_pub_ = this->create_publisher<sensor_msgs::msg::CompressedImage>("~/rgb/right_image/compressed", 1);
+
+  // We delay IT initialization/publishing to when we have shared_ptr or use `create_publisher` which takes `node_interfaces`.
+  // Ideally, use `image_transport::create_publisher(this, ...)` directly if supported.
+  // As of generic ROS 2, `image_transport::create_publisher` expects `rclcpp::Node*` or `rclcpp::Node::SharedPtr`.
+  // Pass `this` works for `rclcpp::Node*` overloads.
+  
+  // left_image_pub_ = image_transport::create_publisher(this, "rgb/left_image_raw");
+  // right_image_pub_ = image_transport::create_publisher(this, "rgb/right_image_raw");
 
   CameraInit();
   SensorInit();
 
-  ROS_INFO("[%s] Node started", node_name_.c_str());
+  running_ = true;
+  camera_thread_ = std::thread(&ZedCameraNode::RunCameraLoop, this);
+  imu_thread_ = std::thread(&ZedCameraNode::RunIMULoop, this);
+
+  RCLCPP_INFO(this->get_logger(), "Node started");
 }
 
-void ZedCameraNode::runCamera()
+ZedCameraNode::~ZedCameraNode()
 {
-  PublishImages();
-  // ros::spinOnce();
+  running_ = false;
+  if (camera_thread_.joinable()) camera_thread_.join();
+  if (imu_thread_.joinable()) imu_thread_.join();
 }
 
-void ZedCameraNode::runIMU()
+void ZedCameraNode::RunCameraLoop()
 {
-  ros::Rate rate(200);
-  while(1){
-    PublishIMU();
-    rate.sleep();
+  while(running_ && rclcpp::ok()) {
+    PublishImages();
+    // Yield to avoid 100% CPU if capture is non-blocking, but getLastFrame usually blocks or sleeps.
+    // If getLastFrame is non-blocking and returns empty, we should sleep.
+    // Assuming blocking for now based on original code usage.
   }
 }
 
-void ZedCameraNode::run()
+void ZedCameraNode::RunIMULoop()
 {
-  PublishImages();
-  // PublishIMU();
+  rclcpp::Rate rate(200);
+  while(running_ && rclcpp::ok()){
+    PublishIMU();
+    rate.sleep();
+  }
 }
 
 void ZedCameraNode::CameraInit()
@@ -64,22 +77,19 @@ void ZedCameraNode::CameraInit()
   params.fps = sl_oc::video::FPS::FPS_15;
   params.verbose = sl_oc::VERBOSITY::INFO;
 
-  // //camera parameter
-  // double fx = 355.3514, fy = 355.9311, cx = 337.8985, cy = 194.2103;
-  // double k1 = 0.3466, k2=0.1725, p1 = 0.0150, p2 = 0.0063;
-  // camera_matrix_ = (cv::Mat_<double>(3,3)<<fx, 0, cx, 0, fy, cy, 0, 0, 1);
-  // dist_coeffs_ = (cv::Mat_<double>(1,4)<<k1, k2, p1, p2);
-  //
-
   // Create Video Capture
   cap_ = std::make_unique<sl_oc::video::VideoCapture>(params);
   if (!cap_->initializeVideo()) {
-    ROS_ERROR("[%s] Cannot open camera video capture", node_name_.c_str());
-    ros::shutdown();
+    RCLCPP_ERROR(this->get_logger(), "Cannot open camera video capture");
+    // In ROS 2, we can't easily shut down the whole system from a constructor/init, 
+    // but we can exit the process or just return.
+    // ros::shutdown() equivalent:
+    rclcpp::shutdown();
     return;
   }
 
-  ROS_INFO("[%s] Connected to camera sn: %d [%s]", node_name_.c_str(), cap_->getSerialNumber(), cap_->getDeviceName().c_str());
+  RCLCPP_INFO(this->get_logger(), "Connected to camera sn: %d [%s]", 
+    cap_->getSerialNumber(), cap_->getDeviceName().c_str());
 }
 
 void ZedCameraNode::SensorInit()
@@ -89,20 +99,20 @@ void ZedCameraNode::SensorInit()
   std::vector<int> devs = sens_->getDeviceList();
 
   if (devs.size() == 0) {
-    ROS_ERROR("[%s] No available ZED 2, ZED 2i or ZED Mini cameras", node_name_.c_str());
-    ros::shutdown();
+    RCLCPP_ERROR(this->get_logger(), "No available ZED 2, ZED 2i or ZED Mini cameras");
+    rclcpp::shutdown();
     return;
   }
 
   uint16_t fw_maior;
   uint16_t fw_minor;
   sens_->getFirmwareVersion(fw_maior, fw_minor);
-  ROS_INFO("[%s] Connected to IMU firmware version: %d.%d", node_name_.c_str(), fw_maior, fw_minor);
+  RCLCPP_INFO(this->get_logger(), "Connected to IMU firmware version: %d.%d", fw_maior, fw_minor);
 
   // Initialize the sensors
   if (!sens_->initializeSensors(devs[0])) {
-    ROS_ERROR("[%s] IMU initialize failed", node_name_.c_str());
-    ros::shutdown();
+    RCLCPP_ERROR(this->get_logger(), "IMU initialize failed");
+    rclcpp::shutdown();
     return;
   }
 }
@@ -110,6 +120,7 @@ void ZedCameraNode::SensorInit()
 void ZedCameraNode::PublishImages()
 {
   // Get last available frame
+  if (!cap_) return;
   const sl_oc::video::Frame frame = cap_->getLastFrame();
 
   // Process and publish the frame
@@ -122,38 +133,33 @@ void ZedCameraNode::PublishImages()
     cv::Mat left_img = frame_bgr(cv::Rect(0, 0, frame_bgr.cols / 2, frame_bgr.rows));
     cv::Mat right_img = frame_bgr(cv::Rect(frame_bgr.cols / 2, 0, frame_bgr.cols / 2, frame_bgr.rows));
 
-    // //undistort image
-    // cv::Mat left_undist_img,right_undist_img;
-    // cv::undistort(left_img, left_undist_img, camera_matrix_, dist_coeffs_);
-    // cv::undistort(right_img, right_undist_img, camera_matrix_, dist_coeffs_);
-
     // Convert the OpenCV images to ROS image messages
-    std_msgs::Header head;
-    head.stamp = ros::Time::now();
-    sensor_msgs::ImagePtr left_msg =
-      cv_bridge::CvImage(std_msgs::Header(), "bgr8", left_img).toImageMsg();
-    sensor_msgs::ImagePtr right_msg =
-      cv_bridge::CvImage(std_msgs::Header(), "bgr8", right_img).toImageMsg();
+    // Use cv_bridge::CvImage(...).toImageMsg()
+    // In ROS 2, toImageMsg produces sensor_msgs::msg::Image::SharedPtr or similar.
 
-    left_msg->header = head;
-    right_msg->header = head;
+    std_msgs::msg::Header head;
+    head.stamp = this->now();
+    head.frame_id = "zed_camera_link"; // Good practice to have a frame_id
+
+    sensor_msgs::msg::Image::SharedPtr left_msg =
+      cv_bridge::CvImage(head, "bgr8", left_img).toImageMsg();
+    sensor_msgs::msg::Image::SharedPtr right_msg =
+      cv_bridge::CvImage(head, "bgr8", right_img).toImageMsg();
 
     // Publish the left and right image messages
     // left_image_pub_.publish(left_msg);
     // right_image_pub_.publish(right_msg);
 
-
-
     // Create a CompressedImage message
-    sensor_msgs::CompressedImage left_compressed_msg, right_compressed_msg;
-    left_compressed_msg.header = left_msg->header; // Use the same header as the raw image
+    sensor_msgs::msg::CompressedImage left_compressed_msg, right_compressed_msg;
+    left_compressed_msg.header = left_msg->header; 
     left_compressed_msg.format = "jpeg";
-    right_compressed_msg.header = right_msg->header; // Use the same header as the raw image
+    right_compressed_msg.header = right_msg->header;
     right_compressed_msg.format = "jpeg";
 
     // Compress the image
     std::vector<uint8_t> left_buffer, right_buffer;
-    std::vector<int> compression_params = {cv::IMWRITE_JPEG_QUALITY, 90}; // Adjust quality (0-100)
+    std::vector<int> compression_params = {cv::IMWRITE_JPEG_QUALITY, 90}; 
     cv::imencode(".jpg", left_img, left_buffer, compression_params);
     cv::imencode(".jpg", right_img, right_buffer, compression_params);
 
@@ -162,23 +168,26 @@ void ZedCameraNode::PublishImages()
     right_compressed_msg.data = right_buffer;
 
     // Publish the compressed image
-    left_image_compressed_pub_.publish(left_compressed_msg);
-    right_image_compressed_pub_.publish(right_compressed_msg);
+    left_image_compressed_pub_->publish(left_compressed_msg);
+    right_image_compressed_pub_->publish(right_compressed_msg);
   }
 }
 
 void ZedCameraNode::PublishIMU()
 {
+  if (!sens_) return;
   // Get IMU data with a timeout of 5 milliseconds
   const sl_oc::sensors::data::Imu imu_data = sens_->getLastIMUData(1);
 
   if (imu_data.valid == sl_oc::sensors::data::Imu::NEW_VAL) {
     // Create a sensor_msgs/Imu message
-    sensor_msgs::Imu imu_msg;
-    imu_msg.header.stamp = ros::Time::now();
+    sensor_msgs::msg::Imu imu_msg;
+    imu_msg.header.stamp = this->now();
     imu_msg.header.frame_id = "imu_frame";
 
-    // Convert the IMU data to the sensor_msgs/Imu message fields
+    // Convert the IMU data
+    // Coordinate system transform might be needed depending on ROS standards (ENU vs NED).
+    // Original code: x = -aX, y = aY, z = -aZ. Keeping as is.
     imu_msg.linear_acceleration.x = -imu_data.aX;
     imu_msg.linear_acceleration.y = imu_data.aY;
     imu_msg.linear_acceleration.z = -imu_data.aZ;
@@ -187,13 +196,11 @@ void ZedCameraNode::PublishIMU()
     imu_msg.angular_velocity.y = imu_data.gY;
     imu_msg.angular_velocity.z = -imu_data.gZ;
 
-    // Publish the sensor_msgs/Imu message
-    imu_pub_.publish(imu_msg);
-    // ROS_INFO_STREAM("publish IMU");
+    imu_pub_->publish(imu_msg);
   }
   else{
-    ROS_DEBUG_STREAM("IMU data not valid");
+    // RCLCPP_DEBUG(this->get_logger(), "IMU data not valid");
   }
 }
 
-}  // namespace zed_cpu
+}  // namespace zed_cpu_ros2

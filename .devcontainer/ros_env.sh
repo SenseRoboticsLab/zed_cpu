@@ -1,0 +1,1 @@
+source /opt/ros/foxy/setup.sh && source /home/user/ros2_ws/install/setup.sh
