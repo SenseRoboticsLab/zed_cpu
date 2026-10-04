@@ -3,6 +3,11 @@ project(zed_cpu)
 
 add_compile_options(-std=c++14)
 
+# Optimized build unless the user asks for something else
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
 # Raspberry Pi 4 - OS 64bit
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
 add_compile_options(-mtune=cortex-a72 -mcpu=cortex-a72)

@@ -24,6 +24,7 @@
 #include "defines.hpp"
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 #include <fstream>      // std::ofstream
 #include <iomanip>
 
@@ -454,6 +455,7 @@ private:
     int mFileDesc=-1;                   //!< The file descriptor handler
 
     std::mutex mBufMutex;               //!< Mutex for safe access to data buffer
+    std::condition_variable mFrameCV;   //!< Signaled (with mBufMutex) when a new frame is stored
     std::mutex mComMutex;               //!< Mutex for safe access to UVC communication
 
     int mWidth = 0;                     //!< Frame width

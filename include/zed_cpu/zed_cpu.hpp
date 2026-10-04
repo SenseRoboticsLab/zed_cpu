@@ -5,6 +5,8 @@
 #include <opencv2/opencv.hpp>
 #include <ros/ros.h>
 
+#include <sensor_msgs/CompressedImage.h>
+
 #include <zed_lib/sensorcapture.hpp>
 #include <zed_lib/videocapture.hpp>
 
@@ -38,6 +40,11 @@ private:
   std::unique_ptr<sl_oc::video::VideoCapture> cap_;
   std::unique_ptr<sl_oc::sensors::SensorCapture> sens_;
   cv::Mat camera_matrix_, dist_coeffs_;
+
+  // Reused every frame to avoid reallocating
+  cv::Mat left_bgr_, right_bgr_;
+  sensor_msgs::CompressedImage left_msg_, right_msg_;
+  uint64_t last_frame_id_ = 0;
 };
 
 }  // namespace zed_cpu

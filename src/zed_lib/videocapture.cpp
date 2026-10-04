@@ -23,6 +23,7 @@
 
 #include <sys/stat.h>         // for stat, S_ISCHR
 #include <errno.h>            // for errno, EBADRQC, EINVAL, ENOBUFS, ENOENT
+#include <poll.h>             // for poll, pollfd, POLLIN
 #include <fcntl.h>            // for open, O_NONBLOCK, O_RDONLY, O_RDWR
 #include <unistd.h>           // for usleep, close
 
@@ -785,6 +786,15 @@ void VideoCapture::grabThreadFunc()
     {
         mGrabRunning=true;
 
+        // The device is opened O_NONBLOCK, so sleep in poll() until a buffer is ready instead of
+        // spinning on DQBUF. The timeout lets the loop notice mStopCapture.
+        struct pollfd pfd;
+        pfd.fd = mFileDesc;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        if (poll(&pfd, 1, 100) <= 0)
+            continue;
+
         mComMutex.lock();
         int ret = ioctl(mFileDesc, VIDIOC_DQBUF, &buf);
         mComMutex.unlock();
@@ -837,6 +847,7 @@ void VideoCapture::grabThreadFunc()
                 mNewFrame=true;
             }
             mBufMutex.unlock();
+            mFrameCV.notify_all();
 
             mComMutex.lock();
             ioctl(mFileDesc, VIDIOC_QBUF, &buf);
@@ -846,7 +857,8 @@ void VideoCapture::grabThreadFunc()
         }
         else
         {
-            if (buf.bytesused != buf.length)
+            // Only requeue a buffer that was actually dequeued
+            if (ret == 0 && buf.bytesused != buf.length)
             {
                 mComMutex.lock();
                 ioctl(mFileDesc, VIDIOC_QBUF, &buf);
@@ -863,21 +875,9 @@ void VideoCapture::grabThreadFunc()
 
 const Frame& VideoCapture::getLastFrame( uint64_t timeout_msec )
 {
-    // ----> Wait for a new frame
-    uint64_t time_count = timeout_msec*10;
-    while( !mNewFrame )
-    {
-        if(time_count==0)
-        {
-            return mLastFrame;
-        }
-        time_count--;
-        usleep(100);
-    }
-    // <---- Wait for a new frame
-
-    // Get the frame mutex
-    const std::lock_guard<std::mutex> lock(mBufMutex);
+    // Sleep until the grab thread stores a new frame (or the timeout expires)
+    std::unique_lock<std::mutex> lock(mBufMutex);
+    mFrameCV.wait_for(lock, std::chrono::milliseconds(timeout_msec), [this]{ return mNewFrame; });
     mNewFrame = false;
     return mLastFrame;
 }

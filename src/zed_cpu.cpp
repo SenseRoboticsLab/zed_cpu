@@ -1,9 +1,9 @@
 #include <zed_cpu.hpp>
 
+#include <future>
 #include <memory>
 #include <vector>
 
-#include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <opencv2/opencv.hpp>
 #include <ros/ros.h>
@@ -15,6 +15,14 @@
 
 namespace zed_cpu
 {
+
+namespace
+{
+// Accelerometer calibration results (per-axis scale and temperature-corrected bias),
+// applied to the raw sensor-frame readings as: corrected = (raw - bias) / scale
+constexpr double kAccelScale[3] = {1.00001, 0.996776, 0.997335};
+constexpr double kAccelBias[3] = {-0.112271, 0.0700745, 0.0688659};
+}  // namespace
 
 ZedCameraNode::ZedCameraNode(
   const std::shared_ptr<ros::NodeHandle> & nh,
@@ -109,62 +117,41 @@ void ZedCameraNode::SensorInit()
 
 void ZedCameraNode::PublishImages()
 {
-  // Get last available frame
+  // Wait for the next frame (returns the previous one again if the wait times out)
   const sl_oc::video::Frame frame = cap_->getLastFrame();
 
-  // Process and publish the frame
-  if (frame.data != nullptr) {
-    cv::Mat frame_yuv = cv::Mat(frame.height, frame.width, CV_8UC2, frame.data);
-    cv::Mat frame_bgr;
-    cv::cvtColor(frame_yuv, frame_bgr, cv::COLOR_YUV2BGR_YUYV);
-
-    // Split the frame into left and right images
-    cv::Mat left_img = frame_bgr(cv::Rect(0, 0, frame_bgr.cols / 2, frame_bgr.rows));
-    cv::Mat right_img = frame_bgr(cv::Rect(frame_bgr.cols / 2, 0, frame_bgr.cols / 2, frame_bgr.rows));
-
-    // //undistort image
-    // cv::Mat left_undist_img,right_undist_img;
-    // cv::undistort(left_img, left_undist_img, camera_matrix_, dist_coeffs_);
-    // cv::undistort(right_img, right_undist_img, camera_matrix_, dist_coeffs_);
-
-    // Convert the OpenCV images to ROS image messages
-    std_msgs::Header head;
-    head.stamp = ros::Time::now();
-    sensor_msgs::ImagePtr left_msg =
-      cv_bridge::CvImage(std_msgs::Header(), "bgr8", left_img).toImageMsg();
-    sensor_msgs::ImagePtr right_msg =
-      cv_bridge::CvImage(std_msgs::Header(), "bgr8", right_img).toImageMsg();
-
-    left_msg->header = head;
-    right_msg->header = head;
-
-    // Publish the left and right image messages
-    // left_image_pub_.publish(left_msg);
-    // right_image_pub_.publish(right_msg);
-
-
-
-    // Create a CompressedImage message
-    sensor_msgs::CompressedImage left_compressed_msg, right_compressed_msg;
-    left_compressed_msg.header = left_msg->header; // Use the same header as the raw image
-    left_compressed_msg.format = "jpeg";
-    right_compressed_msg.header = right_msg->header; // Use the same header as the raw image
-    right_compressed_msg.format = "jpeg";
-
-    // Compress the image
-    std::vector<uint8_t> left_buffer, right_buffer;
-    std::vector<int> compression_params = {cv::IMWRITE_JPEG_QUALITY, 90}; // Adjust quality (0-100)
-    cv::imencode(".jpg", left_img, left_buffer, compression_params);
-    cv::imencode(".jpg", right_img, right_buffer, compression_params);
-
-    // Fill the CompressedImage message
-    left_compressed_msg.data = left_buffer;
-    right_compressed_msg.data = right_buffer;
-
-    // Publish the compressed image
-    left_image_compressed_pub_.publish(left_compressed_msg);
-    right_image_compressed_pub_.publish(right_compressed_msg);
+  // Skip timeouts and frames that were already published
+  if (frame.data == nullptr || frame.frame_id == last_frame_id_) {
+    return;
   }
+  last_frame_id_ = frame.frame_id;
+
+  std_msgs::Header head;
+  head.stamp = ros::Time::now();
+
+  // The frame is the left and right images side by side in YUYV format
+  const cv::Mat frame_yuv(frame.height, frame.width, CV_8UC2, frame.data);
+  const int eye_width = frame.width / 2;
+  const std::vector<int> jpeg_params = {cv::IMWRITE_JPEG_QUALITY, 90};
+
+  // Convert one half of the frame to BGR and JPEG-encode it straight into the message.
+  // The buffers are members so their memory is reused from frame to frame.
+  auto encode_eye = [&](int x_offset, cv::Mat & bgr, sensor_msgs::CompressedImage & msg) {
+    cv::cvtColor(
+      frame_yuv(cv::Rect(x_offset, 0, eye_width, frame.height)), bgr, cv::COLOR_YUV2BGR_YUYV);
+    msg.header = head;
+    msg.format = "jpeg";
+    cv::imencode(".jpg", bgr, msg.data, jpeg_params);
+  };
+
+  // Encode the right image on another core while this thread does the left one
+  auto right_done = std::async(
+    std::launch::async, encode_eye, eye_width, std::ref(right_bgr_), std::ref(right_msg_));
+  encode_eye(0, left_bgr_, left_msg_);
+  right_done.get();
+
+  left_image_compressed_pub_.publish(left_msg_);
+  right_image_compressed_pub_.publish(right_msg_);
 }
 
 void ZedCameraNode::PublishIMU()
@@ -178,10 +165,16 @@ void ZedCameraNode::PublishIMU()
     imu_msg.header.stamp = ros::Time::now();
     imu_msg.header.frame_id = "imu_frame";
 
+    // Apply accelerometer calibration (scale + temperature-corrected bias) on the
+    // raw sensor-frame axes before converting to the ROS axis convention
+    const double accel_x = (imu_data.aX - kAccelBias[0]) / kAccelScale[0];
+    const double accel_y = (imu_data.aY - kAccelBias[1]) / kAccelScale[1];
+    const double accel_z = (imu_data.aZ - kAccelBias[2]) / kAccelScale[2];
+
     // Convert the IMU data to the sensor_msgs/Imu message fields
-    imu_msg.linear_acceleration.x = -imu_data.aX;
-    imu_msg.linear_acceleration.y = imu_data.aY;
-    imu_msg.linear_acceleration.z = -imu_data.aZ;
+    imu_msg.linear_acceleration.x = -accel_x;
+    imu_msg.linear_acceleration.y = accel_y;
+    imu_msg.linear_acceleration.z = -accel_z;
 
     imu_msg.angular_velocity.x = -imu_data.gX;
     imu_msg.angular_velocity.y = imu_data.gY;
